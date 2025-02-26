@@ -82,7 +82,7 @@ class WindyCliffWorld(gym.Env):
         plt.axis('off')
         fig.canvas.draw()
         plt.close(fig)
-        image = np.array(fig.canvas.renderer.buffer_rgba())
+        image = np.array(fig.canvas.get_renderer().buffer_rgba()) # had to edit fig.canvas.get_renderer() for it to work on MacOS
         return image
 
 # Create and register the environment
@@ -90,16 +90,54 @@ env = WindyCliffWorld()
 
 def q_learning(env, num_episodes, alpha, gamma, epsilon):
     q_table = np.zeros([env.observation_space.n, env.action_space.n])
-
-    # TODO: Implement Q-learning algorithm
-    
+    for _ in range(num_episodes):
+        s = env.reset()
+        end = False
+        while not end:
+            # e-greedy
+            if np.random.rand() < epsilon:
+                action = np.random.randint(env.action_space.n)
+            else:
+                action = np.argmax(q_table[s])
+            next_s, reward, end, _ = env.step(action)
+            # off-policy upd
+            q_table[s, action] += alpha * (reward + gamma * np.max(q_table[next_s]) - q_table[s, action])
+            s = next_s
     return q_table
 
 def sarsa(env, num_episodes, alpha, gamma, epsilon):
     q_table = np.zeros([env.observation_space.n, env.action_space.n])
+    max_steps = 200  # added step-limit to avoid inf loop
 
-    # TODO: Implement SARSA algorithm
-    
+    for _ in range(num_episodes):
+        s = env.reset()
+        end = False
+        # e-greedy
+        if np.random.rand() < epsilon:
+            action = np.random.randint(env.action_space.n)
+        else:
+            action = np.argmax(q_table[s])
+        
+        steps = 0
+        while not end and steps < max_steps:
+            next_s, reward, end, _ = env.step(action)
+            
+            if not end:
+                if np.random.rand() < epsilon:
+                    next_action = np.random.randint(env.action_space.n)
+                else:
+                    next_action = np.argmax(q_table[next_s])
+                
+                # sarsa upd
+                q_table[s, action] += alpha * (
+                    reward + gamma * q_table[next_s, next_action] - q_table[s, action]
+                )
+                
+                s, action = next_s, next_action
+            else:
+                q_table[s, action] += alpha * (reward - q_table[s, action])
+            
+            steps += 1
     return q_table
 
 def save_gif(frames, path='./', filename='gym_animation.gif'):
@@ -121,16 +159,73 @@ def visualize_policy(env, q_table, filename='q_learning.gif'):
 
 # Testing Q-Learning
 env = WindyCliffWorld()
-q_table = q_learning(env, num_episodes=500, alpha=0.1, gamma=0.99, epsilon=0.1)
+q_table = q_learning(env, num_episodes=1000, alpha=0.1, gamma=0.99, epsilon=0.1)
 visualize_policy(env, q_table, filename='q_learning_windy_cliff.gif')
 
 # Testing SARSA
-# env = WindyCliffWorld()
-# q_table = sarsa(env, num_episodes=500, alpha=0.1, gamma=0.99, epsilon=0.1)
-# visualize_policy(env, q_table, filename='sarsa_windy_cliff.gif')
+env = WindyCliffWorld()
+q_table = sarsa(env, num_episodes=500, alpha=0.1, gamma=0.99, epsilon=0.1)
+visualize_policy(env, q_table, filename='sarsa_windy_cliff.gif')
 
-# TODO: Run experiments with different hyperparameters and visualize the results
+### Helpers for running experiments with different hyperparameters ###
+
+def eval_policy(env, q_table, num_eval_episodes=50, epsilon=0.05):
+    rewards = []
+    for _ in range(num_eval_episodes):
+        s = env.reset()
+        end = False
+        total_reward = 0
+        while not end:
+            # e-greedy
+            if np.random.rand() < epsilon:
+                action = np.random.randint(env.action_space.n)
+            else:
+                action = np.argmax(q_table[s])
+            s, reward, end, _ = env.step(action)
+            total_reward += reward
+        rewards.append(total_reward)
+    return rewards
+
+def run_exp(alg, num_episodes=500, gamma=0.99, num_eval_episodes=50):
+    alphas = [0.1, 0.5]
+    epsilons = [0.1, 0.5]
+    results = {}
+    
+    for alpha in alphas:
+        for epsilon in epsilons:
+            env = WindyCliffWorld()
+            if alg == 'q_learning':
+                q_table = q_learning(env, num_episodes, alpha, gamma, epsilon)
+            elif alg == 'sarsa':
+                q_table = sarsa(env, num_episodes, alpha, gamma, epsilon)
+            
+            eval_rewards = eval_policy(env, q_table, num_eval_episodes)
+            results[(alpha, epsilon)] = eval_rewards
+    return results
+
+def plot_results(results, alg):
+    plt.figure()
+    for (alpha, epsilon), rewards in results.items():
+        plt.plot(rewards, label=f'α={alpha}, ε={epsilon}')
+    
+    plt.xlabel('Episode')
+    plt.ylabel('Total Reward')
+    plt.title(f'{alg} Total Reward over Episodes')
+    plt.legend()
+
+    # save png files
+    filename = f"{alg.lower()}_windy_cliff_hyperparameters.png"
+    plt.savefig(filename)
+    plt.show()
+
+# Run experiments with different hyperparameters and visualize the results
 # You should generate two plots:
-# 1. Total reward over episodes for different α and ε values for Q-learning
-# 2. Total reward over episodes for different α and ε values for SARSA
 # For each plot, use at least 2 different values for α and 2 different values for ε
+
+# 1. Total reward over episodes for different α and ε values for Q-learning
+q_r = run_exp('q_learning', num_episodes=500, gamma=0.99)
+plot_results(q_r, 'q_learning')
+
+# 2. Total reward over episodes for different α and ε values for SARSA
+sarsa_r = run_exp('sarsa', num_episodes=500, gamma=0.99)
+plot_results(sarsa_r, 'sarsa')
